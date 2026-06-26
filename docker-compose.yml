@@ -1,0 +1,157 @@
+# =============================================================================
+# Foundation stack: 3-broker Kafka (KRaft) + TimescaleDB (hot) + MinIO (cold).
+# Monitoring & Airflow arrive in later increments behind Compose `profiles`.
+#
+#   cp .env.example .env      # then edit passwords
+#   docker compose up -d
+#   make verify               # checks the KRaft quorum
+# =============================================================================
+
+# --- Shared Kafka settings (anchored once, merged into each broker) ----------
+x-kafka-env: &kafka-env
+  KAFKA_PROCESS_ROLES: broker,controller          # KRaft combined mode: no ZooKeeper
+  KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka1:9093,2@kafka2:9093,3@kafka3:9093
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+  # RF=3 / min.insync=2 on the internal topics too — so the cluster's own
+  # bookkeeping survives a single broker loss, not just your data topics.
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 2
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0       # faster consumer startup in dev
+  CLUSTER_ID: ${CLUSTER_ID}                       # same ID formats all 3 brokers
+
+x-kafka-common: &kafka-common
+  image: confluentinc/cp-kafka:7.6.0
+  healthcheck:
+    # Broker is "healthy" only once it answers an API call on its own listener.
+    test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+    interval: 10s
+    timeout: 10s
+    retries: 12
+    start_period: 25s
+  networks: [telemetry]
+  restart: unless-stopped
+
+services:
+  # --- Kafka brokers ---------------------------------------------------------
+  # Two listeners per broker:
+  #   PLAINTEXT (9092)  -> in-network clients use the container name (kafka1:9092)
+  #   EXTERNAL  (29092) -> host tools use localhost:<published port>
+  # advertised.listeners must hand the client back the address IT can reach,
+  # which is why EXTERNAL advertises localhost:<unique host port> per broker.
+  kafka1:
+    <<: *kafka-common
+    hostname: kafka1
+    container_name: kafka1
+    ports: ["29092:29092"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092,EXTERNAL://localhost:29092
+    volumes: ["kafka1-data:/var/lib/kafka/data"]
+
+  kafka2:
+    <<: *kafka-common
+    hostname: kafka2
+    container_name: kafka2
+    ports: ["29093:29092"]              # host 29093 -> container 29092
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9092,EXTERNAL://localhost:29093
+    volumes: ["kafka2-data:/var/lib/kafka/data"]
+
+  kafka3:
+    <<: *kafka-common
+    hostname: kafka3
+    container_name: kafka3
+    ports: ["29094:29092"]              # host 29094 -> container 29092
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9092,EXTERNAL://localhost:29094
+    volumes: ["kafka3-data:/var/lib/kafka/data"]
+
+  # --- TimescaleDB: hot tier (relational, time-series) -----------------------
+  timescaledb:
+    image: timescale/timescaledb:2.15.3-pg16
+    container_name: timescaledb
+    environment:
+      POSTGRES_DB: ${TIMESCALE_DB}
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+    ports: ["5432:5432"]
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro     # *.sql here auto-runs on FIRST boot only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [telemetry]
+    restart: unless-stopped
+
+  # --- MinIO: cold tier (S3-compatible object storage) -----------------------
+  minio:
+    image: minio/minio:RELEASE.2024-06-13T22-53-53Z
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # web console
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      # Uses bundled `mc`; if your image lacks it, swap for the
+      # http://localhost:9000/minio/health/live endpoint.
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [telemetry]
+    restart: unless-stopped
+
+  # One-shot: create the cold-tier bucket once MinIO is healthy, then exit.
+  minio-setup:
+    image: minio/mc:RELEASE.2024-06-12T14-34-03Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
+      mc mb --ignore-existing local/telemetry &&
+      echo 'cold-tier bucket ready: local/telemetry'
+      "
+    networks: [telemetry]
+    restart: "no"
+
+  # --- Later increments (kept here as a map of intent) -----------------------
+  # prometheus / grafana / exporters / airflow will be added with
+  #   profiles: [monitoring]  or  profiles: [airflow]
+  # so `docker compose up -d` brings up only the foundation, and
+  # `docker compose --profile monitoring up -d` adds observability on demand.
+
+networks:
+  telemetry:
+    driver: bridge
+
+volumes:
+  kafka1-data:
+  kafka2-data:
+  kafka3-data:
+  timescale-data:
+  minio-data:
