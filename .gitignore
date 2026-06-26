@@ -1,2 +1,7 @@
 # Data folder
 data/
+
+＃ env
+.env
+.env.local
+.env.example
