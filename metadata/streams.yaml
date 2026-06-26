@@ -1,0 +1,108 @@
+project: garmin-recovery-platform
+version: 1
+
+# ---------------------------------------------------------------------------
+# Cluster-wide defaults. Consumed by ingest/create_topics.py and the Kafka
+# compose config. RF=3 + min_insync=2 is the availability/consistency tradeoff
+# that lets one broker die without blocking writes (see ADR-0004).
+# ---------------------------------------------------------------------------
+defaults:
+  replication_factor: 3
+  min_insync_replicas: 2
+
+# ---------------------------------------------------------------------------
+# Real datasets used to SEED synthetic generation (source-data-driven).
+# The profiler (etl/profile_seed.py) reads these and emits seed_params.yaml.
+# Real data stays local + gitignored; only the derived distributions ship.
+# ---------------------------------------------------------------------------
+seed_sources:
+  whoop_cycles:
+    path: data/whoop/physiological_cycles.csv
+    grain: daily          # one row per physiological cycle (~1 day)
+    role: gold_truth      # seeds daily targets AND validates derived scores
+  whoop_workouts:
+    path: data/whoop/workouts.csv
+    grain: event
+    role: activity_profile
+  fitbit_minute:          # optional; fills intra-day raw HR texture
+    path: data/fitbit/minute_hr.csv
+    grain: minute
+    role: raw_texture
+    optional: true
+
+# ---------------------------------------------------------------------------
+# Bronze (raw) streams the simulator produces to Kafka. Each signal declares
+# which real column seeds its distribution + how it is modelled intra-day.
+# ---------------------------------------------------------------------------
+streams:
+  - name: heart_rate
+    layer: bronze_raw
+    kafka_topic: telemetry.heart_rate
+    partitions: 6
+    frequency_hz: 1
+    signals:
+      - field: bpm
+        seed: { dataset: whoop_cycles, column: "Resting heart rate (bpm)" }
+        model: circadian_gaussian   # daily RHR anchor + circadian envelope
+    sink:
+      hot: timescale.hr_readings
+      cold: s3://telemetry/raw/heart_rate/
+    sla: { max_lag_seconds: 30, alert_lag_threshold: 10000, freshness_minutes: 5 }
+
+  - name: hrv
+    layer: bronze_raw
+    kafka_topic: telemetry.hrv
+    partitions: 3
+    frequency_hz: 0.0033            # ~ every 5 min, mostly overnight
+    signals:
+      - field: rmssd_ms
+        seed: { dataset: whoop_cycles, column: "Heart rate variability (ms)" }
+        model: nightly_gaussian
+      - field: respiratory_rate
+        seed: { dataset: whoop_cycles, column: "Respiratory rate (rpm)" }
+        model: nightly_gaussian
+    sink:
+      hot: timescale.hrv_readings
+      cold: s3://telemetry/raw/hrv/
+    sla: { max_lag_seconds: 60, alert_lag_threshold: 5000, freshness_minutes: 10 }
+
+  - name: workout
+    layer: bronze_event
+    kafka_topic: telemetry.workout
+    partitions: 3
+    frequency_hz: event             # emitted per workout session
+    signals:
+      - field: activity_name
+        seed: { dataset: whoop_workouts, column: "Activity name" }
+        model: categorical
+      - field: duration_min
+        seed: { dataset: whoop_workouts, column: "Duration (min)" }
+        model: gamma
+      - field: avg_hr
+        seed: { dataset: whoop_workouts, column: "Average HR (bpm)" }
+        model: gaussian
+      - field: strain
+        seed: { dataset: whoop_workouts, column: "Activity Strain" }
+        model: gaussian
+    sink:
+      hot: timescale.workout_events
+      cold: s3://telemetry/raw/workout/
+    sla: { max_lag_seconds: 30, alert_lag_threshold: 2000, freshness_minutes: 15 }
+
+# ---------------------------------------------------------------------------
+# Gold metrics the Airflow silver->gold DAGs derive. source_truth lets us
+# validate synthetic output against the real Whoop distribution.
+# ---------------------------------------------------------------------------
+gold_metrics:
+  - name: recovery_score
+    target_table: timescale.gold_recovery
+    inputs: [hrv_rmssd, resting_hr, sleep_performance]
+    source_truth: { dataset: whoop_cycles, column: "Recovery score %" }
+  - name: sleep_score
+    target_table: timescale.gold_sleep
+    inputs: [light_sleep_min, deep_sleep_min, rem_min, sleep_efficiency]
+    source_truth: { dataset: whoop_cycles, column: "Sleep performance %" }
+  - name: day_strain
+    target_table: timescale.gold_strain
+    inputs: [workout_strain, avg_hr, active_minutes]
+    source_truth: { dataset: whoop_cycles, column: "Day Strain" }

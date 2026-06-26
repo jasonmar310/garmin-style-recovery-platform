@@ -1,0 +1,139 @@
+_meta:
+  generated_from: metadata/streams.yaml
+  datasets_loaded:
+  - whoop_cycles
+  - whoop_workouts
+params:
+  heart_rate.bpm:
+    n: 41
+    mean: 67.512
+    std: 3.729
+    min: 61.0
+    p05: 63.0
+    p25: 65.0
+    p50: 67.0
+    p75: 69.0
+    p95: 74.0
+    max: 80.0
+    model: circadian_gaussian
+    source: whoop_cycles:Resting heart rate (bpm)
+  hrv.rmssd_ms:
+    n: 41
+    mean: 41.293
+    std: 7.484
+    min: 22.0
+    p05: 30.0
+    p25: 36.0
+    p50: 42.0
+    p75: 47.0
+    p95: 52.0
+    max: 52.0
+    model: nightly_gaussian
+    source: whoop_cycles:Heart rate variability (ms)
+  hrv.respiratory_rate:
+    n: 41
+    mean: 13.598
+    std: 0.331
+    min: 12.8
+    p05: 13.1
+    p25: 13.4
+    p50: 13.6
+    p75: 13.8
+    p95: 14.1
+    max: 14.4
+    model: nightly_gaussian
+    source: whoop_cycles:Respiratory rate (rpm)
+  workout.activity_name:
+    n: 116
+    categories:
+      Walking: 0.3879
+      Weightlifting: 0.2414
+      Running: 0.1466
+      Elliptical: 0.0776
+      Cleaning: 0.0431
+      Activity: 0.0259
+      Strength Trainer: 0.0259
+      Functional Fitness: 0.0172
+      Hiking: 0.0172
+      Cooking: 0.0086
+      HIIT: 0.0086
+    model: categorical
+    source: whoop_workouts:Activity name
+  workout.duration_min:
+    n: 116
+    mean: 16.026
+    std: 10.78
+    min: 1.0
+    p05: 2.0
+    p25: 8.0
+    p50: 14.0
+    p75: 22.0
+    p95: 37.0
+    max: 50.0
+    model: gamma
+    source: whoop_workouts:Duration (min)
+  workout.avg_hr:
+    n: 116
+    mean: 120.302
+    std: 13.614
+    min: 88.0
+    p05: 99.75
+    p25: 109.0
+    p50: 121.0
+    p75: 131.0
+    p95: 141.0
+    max: 152.0
+    model: gaussian
+    source: whoop_workouts:Average HR (bpm)
+  workout.strain:
+    n: 116
+    mean: 5.546
+    std: 2.199
+    min: 0.6
+    p05: 3.55
+    p25: 4.2
+    p50: 4.8
+    p75: 6.4
+    p95: 10.5
+    max: 13.5
+    model: gaussian
+    source: whoop_workouts:Activity Strain
+  gold.recovery_score:
+    n: 41
+    mean: 63.195
+    std: 22.633
+    min: 9.0
+    p05: 26.0
+    p25: 45.0
+    p50: 70.0
+    p75: 80.0
+    p95: 95.0
+    max: 97.0
+    model: validation_truth
+    source: whoop_cycles:Recovery score %
+  gold.sleep_score:
+    n: 41
+    mean: 75.634
+    std: 12.783
+    min: 27.0
+    p05: 43.0
+    p25: 75.0
+    p50: 79.0
+    p75: 82.0
+    p95: 88.0
+    max: 90.0
+    model: validation_truth
+    source: whoop_cycles:Sleep performance %
+  gold.day_strain:
+    n: 41
+    mean: 11.295
+    std: 3.251
+    min: 4.7
+    p05: 6.6
+    p25: 8.8
+    p50: 10.9
+    p75: 14.4
+    p95: 15.9
+    max: 17.5
+    model: validation_truth
+    source: whoop_cycles:Day Strain
