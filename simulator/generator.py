@@ -21,7 +21,7 @@ Usage:
   python simulator/generator.py --devices 200 --rate 10    # surge (anomaly demo)
 """
 from __future__ import annotations
-import argparse, json, math, os, random, sys, time
+import argparse, json, math, os, random, sys, time, uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,6 +70,7 @@ def sample(model: str, p: dict, hour: float) -> float | str:
 
 def build_event(stream: dict, seed: dict, device: dict, now: datetime) -> dict:
     evt = {
+        "event_id": uuid.uuid4().hex,
         "device_id": device["id"],
         "device_type": device["type"],
         "stream": stream["name"],

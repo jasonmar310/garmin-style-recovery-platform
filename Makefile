@@ -1,4 +1,4 @@
-.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge
+.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge route
 
 # Bring up the foundation stack (Kafka x3 + Timescale + MinIO)
 up:
@@ -41,6 +41,10 @@ simulate:
 # Produce a throughput surge (the anomaly-demo engine)
 simulate-surge:
 	python simulator/generator.py --devices 200 --rate 10
+
+# Consume telemetry and write to hot (Timescale) + cold (MinIO)
+route:
+	python ingest/router.py
 
 # DANGER: also removes volumes (wipes all data). Use to start clean.
 clean:
