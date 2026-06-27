@@ -1,4 +1,4 @@
-.PHONY: up down ps logs verify clean topics topics-plan
+.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge
 
 # Bring up the foundation stack (Kafka x3 + Timescale + MinIO)
 up:
@@ -33,6 +33,14 @@ topics-plan:
 # Create topics from metadata, then verify partitions/RF on the cluster
 topics:
 	python ingest/create_topics.py --verify
+
+# Produce baseline synthetic load (realistic rate)
+simulate:
+	python simulator/generator.py --devices 200 --rate 1
+
+# Produce a throughput surge (the anomaly-demo engine)
+simulate-surge:
+	python simulator/generator.py --devices 200 --rate 10
 
 # DANGER: also removes volumes (wipes all data). Use to start clean.
 clean:
