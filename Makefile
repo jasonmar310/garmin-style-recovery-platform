@@ -1,4 +1,4 @@
-.PHONY: up down ps logs verify clean
+.PHONY: up down ps logs verify clean topics topics-plan
 
 # Bring up the foundation stack (Kafka x3 + Timescale + MinIO)
 up:
@@ -25,6 +25,14 @@ verify:
 		docker exec $$b kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null \
 		&& echo "OK" || echo "UNREACHABLE"; \
 	done
+
+# Preview the topic plan derived from metadata (no connection)
+topics-plan:
+	python ingest/create_topics.py --dry-run
+
+# Create topics from metadata, then verify partitions/RF on the cluster
+topics:
+	python ingest/create_topics.py --verify
 
 # DANGER: also removes volumes (wipes all data). Use to start clean.
 clean:
