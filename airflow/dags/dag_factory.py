@@ -1,0 +1,138 @@
+"""
+dag_factory.py — generate one bronze->gold DAG per gold metric in streams.yaml.
+
+Metadata-driven: add a metric under gold_metrics in streams.yaml and a DAG
+appears here with no code change (as long as a compute SQL is registered below).
+Each DAG runs: compute (aggregate bronze -> upsert daily gold) then dq_check
+(row count, freshness, and distribution vs the REAL Whoop truth in
+seed_params.yaml — the closed validation loop).
+
+Gold derivations are deliberately approximate proxies for Garmin's proprietary
+metrics (see ADR-0001): the point is a real bronze->silver->gold story, not
+medical precision.
+"""
+from __future__ import annotations
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+import yaml
+
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.exceptions import AirflowSkipException
+
+META = Path("/opt/airflow/metadata")
+meta = yaml.safe_load((META / "streams.yaml").read_text())
+seed = yaml.safe_load((META / "seed_params.yaml").read_text())
+
+
+def _conn():
+    import psycopg2
+    return psycopg2.connect(
+        host=os.getenv("PGHOST", "timescaledb"), port=os.getenv("PGPORT", "5432"),
+        dbname=os.getenv("TIMESCALE_DB", "telemetry"),
+        user=os.getenv("TIMESCALE_USER", "ian"),
+        password=os.getenv("TIMESCALE_PASSWORD", ""))
+
+
+# --- per-metric DDL + compute SQL. Metrics absent here (e.g. sleep_score, which
+#     needs a sleep stream we don't produce yet) generate a DAG that skips. -----
+COMPUTE = {
+    "recovery_score": {
+        "table": "gold_recovery", "score_col": "recovery_score",
+        "ddl": """CREATE TABLE IF NOT EXISTS gold_recovery (
+                    device_id TEXT, day DATE, resting_hr DOUBLE PRECISION,
+                    hrv_rmssd DOUBLE PRECISION, recovery_score DOUBLE PRECISION,
+                    PRIMARY KEY (device_id, day));""",
+        # recovery: higher overnight HRV good, lower resting HR good. Anchored on
+        # the real Whoop means (HRV 41, RHR 67), clipped to 0-100.
+        "sql": """
+            INSERT INTO gold_recovery (device_id, day, resting_hr, hrv_rmssd, recovery_score)
+            SELECT h.device_id, h.day, h.resting_hr, v.hrv_rmssd,
+                   GREATEST(0, LEAST(100,
+                     63 + 1.0*(v.hrv_rmssd - 41) - 1.2*(h.resting_hr - 67))) AS recovery_score
+            FROM (SELECT device_id, date_trunc('day', ts)::date AS day,
+                         percentile_cont(0.05) WITHIN GROUP (ORDER BY bpm) AS resting_hr
+                  FROM hr_readings GROUP BY 1,2) h
+            JOIN (SELECT device_id, date_trunc('day', ts)::date AS day,
+                         avg(rmssd_ms) AS hrv_rmssd
+                  FROM hrv_readings GROUP BY 1,2) v
+              ON v.device_id = h.device_id AND v.day = h.day
+            ON CONFLICT (device_id, day) DO UPDATE SET
+              resting_hr=EXCLUDED.resting_hr, hrv_rmssd=EXCLUDED.hrv_rmssd,
+              recovery_score=EXCLUDED.recovery_score;""",
+    },
+    "day_strain": {
+        "table": "gold_strain", "score_col": "day_strain",
+        "ddl": """CREATE TABLE IF NOT EXISTS gold_strain (
+                    device_id TEXT, day DATE, workout_strain DOUBLE PRECISION,
+                    day_strain DOUBLE PRECISION, PRIMARY KEY (device_id, day));""",
+        # day strain ~ summed workout strain, nudged into Whoop's ~0-21 range.
+        "sql": """
+            INSERT INTO gold_strain (device_id, day, workout_strain, day_strain)
+            SELECT device_id, date_trunc('day', ts)::date AS day,
+                   sum(strain) AS workout_strain,
+                   LEAST(21, sum(strain) + 4) AS day_strain
+            FROM workout_events GROUP BY 1,2
+            ON CONFLICT (device_id, day) DO UPDATE SET
+              workout_strain=EXCLUDED.workout_strain, day_strain=EXCLUDED.day_strain;""",
+    },
+}
+
+
+def compute(metric: str, **_):
+    spec = COMPUTE.get(metric)
+    if spec is None:
+        raise AirflowSkipException(
+            f"no compute registered for {metric} — needs a source stream we "
+            f"don't produce yet (e.g. sleep stages). DAG generated from metadata "
+            f"to show the pattern; skipping until the stream exists.")
+    conn = _conn()
+    with conn, conn.cursor() as cur:
+        cur.execute(spec["ddl"])
+        cur.execute(spec["sql"])
+    conn.close()
+    print(f"[compute] upserted {spec['table']}")
+
+
+def dq_check(metric: str, truth_key: str, **_):
+    spec = COMPUTE.get(metric)
+    if spec is None:
+        raise AirflowSkipException(f"{metric} not computed; nothing to check")
+    truth = seed["params"].get(truth_key, {})
+    t_mean, t_std = truth.get("mean"), truth.get("std")
+    conn = _conn()
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT count(*), avg({spec['score_col']}), max(day) "
+                    f"FROM {spec['table']};")
+        n, avg, max_day = cur.fetchone()
+    conn.close()
+    print(f"[DQ] {spec['table']}: rows={n} avg={avg} max_day={max_day} "
+          f"| whoop truth mean={t_mean} std={t_std}")
+    if not n:
+        raise ValueError(f"DQ FAIL: {spec['table']} is empty (no gold produced)")
+    if t_mean and t_std and abs(float(avg) - t_mean) > 2 * t_std:
+        raise ValueError(
+            f"DQ FAIL: {spec['table']} avg {float(avg):.1f} is >2σ from Whoop "
+            f"mean {t_mean} — gold distribution drifted (upstream anomaly?)")
+
+
+default_args = {"owner": "data", "retries": 1, "retry_delay": timedelta(minutes=2)}
+
+# Generate one DAG per gold metric declared in metadata — the metadata-driven core.
+for gm in meta["gold_metrics"]:
+    name = gm["name"]
+    dag_id = f"gold_{name}"
+    dag = DAG(
+        dag_id, default_args=default_args,
+        schedule="@daily", start_date=datetime(2026, 6, 1),
+        catchup=False, tags=["gold", "medallion"],
+        doc_md=f"Bronze→gold for **{name}** (validated vs Whoop `gold.{name}`).",
+    )
+    with dag:
+        c = PythonOperator(task_id="compute", python_callable=compute,
+                           op_kwargs={"metric": name})
+        d = PythonOperator(task_id="dq_check", python_callable=dq_check,
+                           op_kwargs={"metric": name, "truth_key": f"gold.{name}"})
+        c >> d
+    globals()[dag_id] = dag

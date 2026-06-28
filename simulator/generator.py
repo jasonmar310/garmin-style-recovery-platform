@@ -22,7 +22,7 @@ Usage:
 """
 from __future__ import annotations
 import argparse, json, math, os, random, sys, time, uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -70,7 +70,7 @@ def sample(model: str, p: dict, hour: float) -> float | str:
 
 def build_event(stream: dict, seed: dict, device: dict, now: datetime) -> dict:
     evt = {
-        "event_id": uuid.uuid4().hex,
+        "event_id": uuid.uuid4().hex,                     # idempotency key for sinks
         "device_id": device["id"],
         "device_type": device["type"],
         "stream": stream["name"],
@@ -169,6 +169,50 @@ def run_live(streams, seed, fleet, rate, bootstrap, duration):
         print(f"final: delivered={produced['ok']} errors={produced['err']}")
 
 
+def run_backfill(streams, seed, fleet, days, bootstrap, step_min):
+    """Burst-produce historical events spanning the past `days` days, then exit.
+
+    Gives Airflow multi-day history to aggregate into daily gold metrics. Unlike
+    the live loop, continuous streams are sampled every `step_min` minutes (much
+    coarser than 1 Hz) so N days x 200 devices stays a sane volume — daily gold
+    only needs enough points per device per day, not full resolution. Event
+    streams get a Poisson count per device. Timestamps are historical, so the
+    circadian model still shapes each day correctly.
+    """
+    from confluent_kafka import Producer
+    p = Producer({"bootstrap.servers": bootstrap, "acks": "all",
+                  "enable.idempotence": True, "linger.ms": 50,
+                  "compression.type": "lz4"})
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    continuous = [s for s in streams["streams"] if s["frequency_hz"] != "event"]
+    events = [s for s in streams["streams"] if s["frequency_hz"] == "event"]
+    produced = 0
+
+    t = start
+    while t < now:
+        for s in continuous:
+            for dev in fleet:
+                p.produce(s["kafka_topic"], key=dev["id"].encode(),
+                          value=_serialize(build_event(s, seed, dev, t)))
+                produced += 1
+        p.poll(0)
+        t += timedelta(minutes=step_min)
+
+    for s in events:                                   # workouts: Poisson per device
+        for dev in fleet:
+            for _ in range(np.random.poisson(SESSIONS_PER_DEVICE_PER_DAY * days)):
+                ts = start + timedelta(seconds=random.random() * days * 86_400)
+                p.produce(s["kafka_topic"], key=dev["id"].encode(),
+                          value=_serialize(build_event(s, seed, dev, ts)))
+                produced += 1
+        p.poll(0)
+
+    print(f"backfilling {days}d ({step_min}min step) — flushing {produced:,} events...")
+    p.flush(60)
+    print(f"backfill done: produced {produced:,} events across {days} days")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--devices", type=int, default=200)
@@ -179,6 +223,10 @@ def main() -> int:
                                       "localhost:29092,localhost:29093,localhost:29094"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
+    ap.add_argument("--backfill-days", type=int, default=0,
+                    help="burst-produce this many past days of history, then exit")
+    ap.add_argument("--backfill-step-min", type=int, default=30,
+                    help="minutes between continuous-stream samples during backfill")
     args = ap.parse_args()
 
     if args.seed is not None:
@@ -190,6 +238,10 @@ def main() -> int:
 
     if args.dry_run:
         run_dry(streams, seed, fleet)
+        return 0
+    if args.backfill_days > 0:
+        run_backfill(streams, seed, fleet, args.backfill_days,
+                     args.bootstrap, args.backfill_step_min)
         return 0
     run_live(streams, seed, fleet, args.rate, args.bootstrap, args.duration)
     return 0

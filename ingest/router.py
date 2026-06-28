@@ -13,7 +13,7 @@ Metadata-driven: topic -> table, columns, and cold prefix all come from
 streams.yaml. Add a stream there and the router handles it with no code change.
 """
 from __future__ import annotations
-import argparse, io, json, os, time, uuid
+import argparse, io, json, os, time, uuid, hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 import yaml
@@ -67,9 +67,15 @@ def flush_hot(conn, route: dict, rows: list[dict]) -> None:
 
 
 def flush_cold(s3, route: dict, rows: list[dict]) -> None:
-    now = datetime.now(timezone.utc)
-    key = (f"{route['cold_prefix']}/dt={now:%Y-%m-%d}/hr={now:%H}/"
-           f"{uuid.uuid4().hex}.parquet")
+    # Idempotency: partition by EVENT time (not wall clock) and name the object
+    # by a hash of the batch's event_ids. Re-processing the same offsets writes
+    # the same key -> overwrite, not a duplicate file. (A batch spanning hours
+    # lands under its first event's partition — acceptable for bronze.)
+    first_ts = rows[0].get("ts", datetime.now(timezone.utc).isoformat())
+    dt, hr = first_ts[:10], first_ts[11:13]                 # YYYY-MM-DD, HH
+    digest = hashlib.sha1("".join(r.get("event_id", "") for r in rows)
+                          .encode()).hexdigest()[:16]
+    key = f"{route['cold_prefix']}/dt={dt}/hr={hr}/{digest}.parquet"
     s3.put_object(Bucket=BUCKET, Key=key, Body=parquet_bytes(rows))
 
 
@@ -122,6 +128,7 @@ def main() -> int:
 
     def flush_all():
         nonlocal last_flush
+        t0 = time.time()
         wrote = False
         for topic, rows in buffers.items():
             if rows:
@@ -133,6 +140,7 @@ def main() -> int:
         for t in buffers:
             buffers[t].clear()
         last_flush = time.time()
+        return (time.time() - t0) * 1000                # batch processing latency (ms)
 
     try:
         while True:
@@ -146,8 +154,9 @@ def main() -> int:
             buffered = sum(len(v) for v in buffers.values())
             now = time.time()
             if buffered and (buffered >= BATCH_SIZE or now - last_flush >= BATCH_SECONDS):
-                flush_all()
-                print(f"flushed {buffered} events at {datetime.now():%H:%M:%S}", flush=True)
+                ms = flush_all()
+                print(f"flushed {buffered} events in {ms:.0f}ms "
+                      f"at {datetime.now():%H:%M:%S}", flush=True)
             elif now - last_beat >= 5:
                 print(f"  alive — buffered={buffered}", flush=True)
                 last_beat = now
