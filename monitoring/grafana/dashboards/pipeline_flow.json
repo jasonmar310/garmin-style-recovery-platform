@@ -1,0 +1,75 @@
+{
+  "uid": "pipeline-flow",
+  "title": "2 · Pipeline Flow",
+  "tags": ["telemetry", "kafka", "lag"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total consumer lag",
+      "description": "Headline health number. Climbs on surge (scenario 1) or downstream backpressure (scenario 3).",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ { "expr": "sum(kafka_consumergroup_lag{consumergroup=\"router\"})", "refId": "A" } ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 2000 },
+            { "color": "red", "value": 10000 }
+          ] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "background", "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Consumer lag by topic",
+      "description": "Per-topic lag for the router consumer group. The core diagnosis panel.",
+      "gridPos": { "h": 9, "w": 18, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ {
+        "expr": "sum by (topic) (kafka_consumergroup_lag{consumergroup=\"router\"})",
+        "legendFormat": "{{topic}}", "refId": "A"
+      } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2 }, "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Throughput — messages/sec by topic",
+      "description": "Rate of the partition high-water mark = produce throughput. Spikes 10x on surge.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ {
+        "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{topic=~\"telemetry.*\"}[1m]))",
+        "legendFormat": "{{topic}}", "refId": "A"
+      } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }, "unit": "ops", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Per-partition lag (skew detection)",
+      "description": "If one partition's lag dwarfs the others, the load is skewed (hot key / uneven partitioning).",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ {
+        "expr": "kafka_consumergroup_lag{consumergroup=\"router\"}",
+        "legendFormat": "{{topic}}-p{{partition}}", "refId": "A"
+      } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 1 }, "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge route backfill airflow-up airflow-down
+.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge route backfill airflow-up airflow-down monitoring-up monitoring-down gen-alerts
 
 # Bring up the foundation stack (Kafka x3 + Timescale + MinIO)
 up:
@@ -21,7 +21,7 @@ verify:
 	docker exec kafka1 kafka-metadata-quorum --bootstrap-server localhost:9092 describe --status
 	@echo "\n== Broker API reachable on each broker =="
 	@for b in kafka1 kafka2 kafka3; do \
-		echo "-- $$b --"; \s
+		echo "-- $$b --"; \
 		docker exec $$b kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null \
 		&& echo "OK" || echo "UNREACHABLE"; \
 	done
@@ -57,6 +57,15 @@ airflow-up:
 airflow-down:
 	docker compose --profile airflow down
 
+# Bring up Prometheus + Grafana + exporters
+monitoring-up:
+	docker compose --profile monitoring up -d
+
+monitoring-down:
+	docker compose --profile monitoring down
+
 # DANGER: also removes volumes (wipes all data). Use to start clean.
 clean:
 	docker compose down -v
+	gen-alerts:
+		python monitoring/grafana/gen_alerts.py
