@@ -36,6 +36,38 @@ x-kafka-common: &kafka-common
   networks: [telemetry]
   restart: unless-stopped
 
+# --- Shared Airflow settings (LocalExecutor, behind the `airflow` profile) ---
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+  # DAGs install these at container start (prod would bake a custom image):
+  _PIP_ADDITIONAL_REQUIREMENTS: psycopg2-binary boto3 pyarrow pyyaml
+  # how DAGs reach the telemetry stores — IN-NETWORK names + INTERNAL ports
+  # (note: timescaledb:5432, NOT the host's 5433 — that mapping is host-only):
+  PGHOST: timescaledb
+  PGPORT: "5432"
+  TIMESCALE_DB: ${TIMESCALE_DB}
+  TIMESCALE_USER: ${TIMESCALE_USER}
+  TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD}
+  S3_ENDPOINT: http://minio:9000
+  MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.10.5
+  environment: *airflow-env
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+    - ./metadata:/opt/airflow/metadata:ro       # DAG factory reads streams.yaml
+  user: "${AIRFLOW_UID:-50000}:0"
+  networks: [telemetry]
+  profiles: [airflow]
+
 services:
   # --- Kafka brokers ---------------------------------------------------------
   # Two listeners per broker:
@@ -139,11 +171,65 @@ services:
     networks: [telemetry]
     restart: "no"
 
-  # --- Later increments (kept here as a map of intent) -----------------------
-  # prometheus / grafana / exporters / airflow will be added with
-  #   profiles: [monitoring]  or  profiles: [airflow]
-  # so `docker compose up -d` brings up only the foundation, and
-  # `docker compose --profile monitoring up -d` adds observability on demand.
+  # --- Airflow: medallion + DQ orchestration (`docker compose --profile airflow up -d`)
+  # Its own metadata Postgres, kept separate from the telemetry TimescaleDB.
+  airflow-postgres:
+    image: postgres:13
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes: ["airflow-db:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [telemetry]
+    profiles: [airflow]
+
+  # One-shot: run DB migrations + create the admin user, then exit.
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create --role Admin \
+          --username "${AIRFLOW_ADMIN_USER:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname admin --lastname user --email admin@example.com || true
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    depends_on:
+      airflow-postgres: { condition: service_healthy }
+      airflow-init: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports: ["${AIRFLOW_PORT:-8080}:8080"]
+    depends_on:
+      airflow-postgres: { condition: service_healthy }
+      airflow-init: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+    restart: unless-stopped
 
 networks:
   telemetry:
@@ -155,3 +241,4 @@ volumes:
   kafka3-data:
   timescale-data:
   minio-data:
+  airflow-db:

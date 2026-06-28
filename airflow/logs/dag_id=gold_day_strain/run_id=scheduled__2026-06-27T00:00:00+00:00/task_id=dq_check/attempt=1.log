@@ -1,0 +1,19 @@
+[2026-06-28T05:36:55.603+0000] {local_task_job_runner.py:123} INFO - ::group::Pre task execution logs
+[2026-06-28T05:36:55.628+0000] {taskinstance.py:2614} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: gold_day_strain.dq_check scheduled__2026-06-27T00:00:00+00:00 [queued]>
+[2026-06-28T05:36:55.633+0000] {taskinstance.py:2614} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: gold_day_strain.dq_check scheduled__2026-06-27T00:00:00+00:00 [queued]>
+[2026-06-28T05:36:55.633+0000] {taskinstance.py:2867} INFO - Starting attempt 1 of 2
+[2026-06-28T05:36:55.641+0000] {taskinstance.py:2890} INFO - Executing <Task(PythonOperator): dq_check> on 2026-06-27 00:00:00+00:00
+[2026-06-28T05:36:55.650+0000] {standard_task_runner.py:104} INFO - Running: ['***', 'tasks', 'run', 'gold_day_strain', 'dq_check', 'scheduled__2026-06-27T00:00:00+00:00', '--job-id', '5', '--raw', '--subdir', 'DAGS_FOLDER/dag_factory.py', '--cfg-path', '/tmp/tmpt98pq9eq']
+[2026-06-28T05:36:55.652+0000] {standard_task_runner.py:105} INFO - Job 5: Subtask dq_check
+[2026-06-28T05:36:55.652+0000] {logging_mixin.py:190} WARNING - /home/***/.local/lib/python3.12/site-packages/***/task/task_runner/standard_task_runner.py:70 DeprecationWarning: This process (pid=482) is multi-threaded, use of fork() may lead to deadlocks in the child.
+[2026-06-28T05:36:55.652+0000] {standard_task_runner.py:72} INFO - Started process 483 to run task
+[2026-06-28T05:36:55.987+0000] {task_command.py:467} INFO - Running <TaskInstance: gold_day_strain.dq_check scheduled__2026-06-27T00:00:00+00:00 [running]> on host 56a1ae905955
+[2026-06-28T05:36:56.041+0000] {taskinstance.py:3134} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='data' AIRFLOW_CTX_DAG_ID='gold_day_strain' AIRFLOW_CTX_TASK_ID='dq_check' AIRFLOW_CTX_EXECUTION_DATE='2026-06-27T00:00:00+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2026-06-27T00:00:00+00:00'
+[2026-06-28T05:36:56.041+0000] {taskinstance.py:732} INFO - ::endgroup::
+[2026-06-28T05:36:56.056+0000] {logging_mixin.py:190} INFO - [DQ] gold_strain: rows=2226 avg=13.628154490326912 max_day=2026-06-27 | whoop truth mean=11.295 std=3.251
+[2026-06-28T05:36:56.057+0000] {python.py:240} INFO - Done. Returned value was: None
+[2026-06-28T05:36:56.061+0000] {taskinstance.py:341} INFO - ::group::Post task execution logs
+[2026-06-28T05:36:56.061+0000] {taskinstance.py:353} INFO - Marking task as SUCCESS. dag_id=gold_day_strain, task_id=dq_check, run_id=scheduled__2026-06-27T00:00:00+00:00, execution_date=20260627T000000, start_date=20260628T053655, end_date=20260628T053656
+[2026-06-28T05:36:56.090+0000] {local_task_job_runner.py:266} INFO - Task exited with return code 0
+[2026-06-28T05:36:56.097+0000] {taskinstance.py:3901} INFO - 0 downstream tasks scheduled from follow-on schedule check
+[2026-06-28T05:36:56.099+0000] {local_task_job_runner.py:245} INFO - ::endgroup::

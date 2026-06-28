@@ -1,4 +1,4 @@
-.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge route
+.PHONY: up down ps logs verify clean topics topics-plan simulate simulate-surge route backfill airflow-up airflow-down
 
 # Bring up the foundation stack (Kafka x3 + Timescale + MinIO)
 up:
@@ -21,7 +21,7 @@ verify:
 	docker exec kafka1 kafka-metadata-quorum --bootstrap-server localhost:9092 describe --status
 	@echo "\n== Broker API reachable on each broker =="
 	@for b in kafka1 kafka2 kafka3; do \
-		echo "-- $$b --"; \
+		echo "-- $$b --"; \s
 		docker exec $$b kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null \
 		&& echo "OK" || echo "UNREACHABLE"; \
 	done
@@ -45,6 +45,17 @@ simulate-surge:
 # Consume telemetry and write to hot (Timescale) + cold (MinIO)
 route:
 	python ingest/router.py
+
+# Burst-produce 14 days of history so Airflow has daily data to aggregate
+backfill:
+	python simulator/generator.py --backfill-days 14
+
+# Bring up the Airflow stack (scheduler + webserver + its own metadata DB)
+airflow-up:
+	docker compose --profile airflow up -d
+
+airflow-down:
+	docker compose --profile airflow down
 
 # DANGER: also removes volumes (wipes all data). Use to start clean.
 clean:
