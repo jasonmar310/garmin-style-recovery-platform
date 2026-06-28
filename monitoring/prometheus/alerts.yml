@@ -1,0 +1,62 @@
+# GENERATED from metadata/streams.yaml by monitoring/gen_alerts.py.
+# Do not edit by hand — change the SLA in streams.yaml and re-run.
+groups:
+- name: pipeline_lag
+  rules:
+  - alert: ConsumerLagHigh_heart_rate
+    expr: sum(kafka_consumergroup_lag{consumergroup="router",topic="telemetry.heart_rate"})
+      > 10000
+    for: 1m
+    labels:
+      severity: warning
+      layer: pipeline
+      stream: heart_rate
+    annotations:
+      summary: Consumer lag on telemetry.heart_rate exceeds 10000
+      description: router lag on telemetry.heart_rate has held above 10000 for 1m
+        (SLA from streams.yaml). Downstream readiness scores may go stale.
+  - alert: ConsumerLagHigh_hrv
+    expr: sum(kafka_consumergroup_lag{consumergroup="router",topic="telemetry.hrv"})
+      > 5000
+    for: 1m
+    labels:
+      severity: warning
+      layer: pipeline
+      stream: hrv
+    annotations:
+      summary: Consumer lag on telemetry.hrv exceeds 5000
+      description: router lag on telemetry.hrv has held above 5000 for 1m (SLA from
+        streams.yaml). Downstream readiness scores may go stale.
+  - alert: ConsumerLagHigh_workout
+    expr: sum(kafka_consumergroup_lag{consumergroup="router",topic="telemetry.workout"})
+      > 2000
+    for: 1m
+    labels:
+      severity: warning
+      layer: pipeline
+      stream: workout
+    annotations:
+      summary: Consumer lag on telemetry.workout exceeds 2000
+      description: router lag on telemetry.workout has held above 2000 for 1m (SLA
+        from streams.yaml). Downstream readiness scores may go stale.
+- name: cluster_health
+  rules:
+  - alert: KafkaBrokerDown
+    expr: kafka_brokers < 3
+    for: 30s
+    labels:
+      severity: critical
+      layer: cluster
+    annotations:
+      summary: A Kafka broker is down
+      description: kafka_brokers < 3 — a broker has left the cluster.
+  - alert: UnderReplicatedPartitions
+    expr: sum(kafka_topic_partition_under_replicated_partition) > 0
+    for: 30s
+    labels:
+      severity: critical
+      layer: cluster
+    annotations:
+      summary: Under-replicated partitions present
+      description: At least one partition is under-replicated — a replica has fallen
+        out of the ISR; durability at risk.

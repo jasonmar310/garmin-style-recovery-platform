@@ -1,0 +1,28 @@
+# Prometheus scrape config. Each exporter translates one system's internals
+# into Prometheus metrics; Prometheus pulls them every scrape_interval.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml          # templated from streams.yaml SLAs (next step)
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Kafka: consumer lag + under-replicated partitions + broker count.
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  # Host: CPU / memory / disk / network.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # TimescaleDB: connections, transactions, locks (backpressure signals).
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]

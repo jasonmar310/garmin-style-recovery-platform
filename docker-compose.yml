@@ -231,6 +231,69 @@ services:
       retries: 6
     restart: unless-stopped
 
+  # --- Monitoring: Prometheus + Grafana + exporters (`--profile monitoring`) --
+  # Each exporter turns one system's internals into Prometheus metrics.
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    networks: [telemetry]
+    profiles: [monitoring]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    depends_on: [prometheus]
+    networks: [telemetry]
+    profiles: [monitoring]
+    restart: unless-stopped
+
+  # Kafka -> consumer lag, under-replicated partitions, broker count.
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    command:
+      - --kafka.server=kafka1:9092
+      - --kafka.server=kafka2:9092
+      - --kafka.server=kafka3:9092
+    ports: ["9308:9308"]
+    networks: [telemetry]
+    profiles: [monitoring]
+    restart: unless-stopped
+
+  # Host CPU / memory / disk / network.
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    ports: ["9100:9100"]
+    networks: [telemetry]
+    profiles: [monitoring]
+    restart: unless-stopped
+
+  # TimescaleDB connections / transactions / locks (backpressure signals).
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${TIMESCALE_USER}:${TIMESCALE_PASSWORD}@timescaledb:5432/${TIMESCALE_DB}?sslmode=disable"
+    ports: ["9187:9187"]
+    networks: [telemetry]
+    profiles: [monitoring]
+    restart: unless-stopped
+
 networks:
   telemetry:
     driver: bridge
@@ -242,3 +305,5 @@ volumes:
   timescale-data:
   minio-data:
   airflow-db:
+  prometheus-data:
+  grafana-data:
