@@ -5,3 +5,5 @@ data/
 .env
 .env.local
 .env.example
+
+airflow/logs/
