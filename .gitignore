@@ -1,19 +1,14 @@
-# Data folder
-data/
-
-＃ env
-.env
-.env.local
-.env.example
-
-airflow/logs/
-
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
-env/
-venv/
-.venv/
+
+# Data and env
+data/
+.env
+.env.local
+.env.*example
+
+# Airflow logs
+airflow/logs/
