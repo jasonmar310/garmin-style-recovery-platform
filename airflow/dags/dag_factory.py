@@ -40,6 +40,8 @@ def _conn():
 COMPUTE = {
     "recovery_score": {
         "table": "gold_recovery", "score_col": "recovery_score",
+        "fresh_source": "hr_readings",   # recovery should keep pace with HR days;
+                                         # if HRV goes silent it can't, and lags.
         "ddl": """CREATE TABLE IF NOT EXISTS gold_recovery (
                     device_id TEXT, day DATE, resting_hr DOUBLE PRECISION,
                     hrv_rmssd DOUBLE PRECISION, recovery_score DOUBLE PRECISION,
@@ -64,6 +66,7 @@ COMPUTE = {
     },
     "day_strain": {
         "table": "gold_strain", "score_col": "day_strain",
+        "fresh_source": "workout_events",
         "ddl": """CREATE TABLE IF NOT EXISTS gold_strain (
                     device_id TEXT, day DATE, workout_strain DOUBLE PRECISION,
                     day_strain DOUBLE PRECISION, PRIMARY KEY (device_id, day));""",
@@ -101,20 +104,33 @@ def dq_check(metric: str, truth_key: str, **_):
         raise AirflowSkipException(f"{metric} not computed; nothing to check")
     truth = seed["params"].get(truth_key, {})
     t_mean, t_std = truth.get("mean"), truth.get("std")
+    fresh_source = spec.get("fresh_source")
     conn = _conn()
     with conn.cursor() as cur:
         cur.execute(f"SELECT count(*), avg({spec['score_col']}), max(day) "
                     f"FROM {spec['table']};")
         n, avg, max_day = cur.fetchone()
+        src_day = None
+        if fresh_source:
+            cur.execute(f"SELECT max(date_trunc('day', ts)::date) FROM {fresh_source};")
+            (src_day,) = cur.fetchone()
     conn.close()
     print(f"[DQ] {spec['table']}: rows={n} avg={avg} max_day={max_day} "
-          f"| whoop truth mean={t_mean} std={t_std}")
+          f"| whoop truth mean={t_mean} std={t_std} | {fresh_source} latest={src_day}")
     if not n:
         raise ValueError(f"DQ FAIL: {spec['table']} is empty (no gold produced)")
     if t_mean and t_std and abs(float(avg) - t_mean) > 2 * t_std:
         raise ValueError(
             f"DQ FAIL: {spec['table']} avg {float(avg):.1f} is >2σ from Whoop "
             f"mean {t_mean} — gold distribution drifted (upstream anomaly?)")
+    # Freshness: gold must keep pace with the raw it derives from. If it lags,
+    # a required input stream has gone silent — infra looks fine (Prometheus sees
+    # no error), but readiness scores are stale. This is the data-layer anomaly.
+    if src_day and max_day and max_day < src_day:
+        raise ValueError(
+            f"DQ FAIL: {spec['table']} latest day {max_day} lags {fresh_source} "
+            f"latest {src_day} — a required input stream went silent; "
+            f"readiness scores are stale.")
 
 
 default_args = {"owner": "data", "retries": 1, "retry_delay": timedelta(minutes=2)}

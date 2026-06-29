@@ -223,6 +223,9 @@ def main() -> int:
                                       "localhost:29092,localhost:29093,localhost:29094"))
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility")
+    ap.add_argument("--exclude", default="",
+                    help="comma-separated stream names to NOT produce (e.g. hrv) — "
+                         "drives chaos scenario 4 (a source stream goes silent)")
     ap.add_argument("--backfill-days", type=int, default=0,
                     help="burst-produce this many past days of history, then exit")
     ap.add_argument("--backfill-step-min", type=int, default=30,
@@ -234,6 +237,11 @@ def main() -> int:
         np.random.seed(args.seed)
 
     streams, seed = load()
+    if args.exclude:
+        drop = {x.strip() for x in args.exclude.split(",") if x.strip()}
+        streams["streams"] = [s for s in streams["streams"] if s["name"] not in drop]
+        active = [s["name"] for s in streams["streams"]]
+        print(f"[exclude] silencing {sorted(drop)} — active streams: {active}")
     fleet = make_fleet(args.devices)
 
     if args.dry_run:

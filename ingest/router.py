@@ -115,6 +115,12 @@ def main() -> int:
         "group.id": args.group,
         "enable.auto.commit": False,            # we commit manually, after sinks
         "auto.offset.reset": "earliest",        # don't skip already-buffered data
+        
+        # Note: Single-threaded consumer: flush (DB+MinIO) and heartbeat share one thread.
+        # Better w/ 背景 heartbeat thread、或縮小 batch、或水平擴展
+        # "max.poll.interval.ms": 600000,         # 10 min between polls before eviction
+        # "session.timeout.ms": 45000,            # heartbeat liveness window
+        # "heartbeat.interval.ms": 15000,         # how often heartbeats are sent
     })
 
     def on_assign(c, partitions):
