@@ -16,9 +16,9 @@ incident on demand.
 | ISR per topic | steady (≈ RF) | 1 · Cluster Health |
 | Consumer lag (router) | ~0, spikes converge | 2 · Pipeline Flow |
 | Throughput | ~200 msg/s at baseline | 2 · Pipeline Flow |
-| Router flush latency | tens of ms | router log |
+| Router flush latency | tens of ms (`router_flush_duration_seconds`) | 2 · Pipeline Flow |
 | TimescaleDB | UP, commit ~2 ops/s | 3 · Data Stores |
-| Gold freshness | gold day == source day | Airflow `dq_check` |
+| Gold freshness | 0 days lag; DQ status = PASS | 3 · Data Stores / Airflow `dq_check` |
 
 A lag *spike that converges* is normal (startup catch-up + batch cadence). A lag
 that *diverges monotonically* is an incident.
@@ -138,8 +138,9 @@ can cascade into consumer-group instability — a deeper chain than lag alone.
 - Background heartbeat thread (or larger `max.poll.interval.ms`) so processing
   stalls don't evict the consumer.
 
-**MTTD:** lag alert as in §2; flush-latency is currently log-only (a Prometheus
-metric + alert on `router_flush_duration_ms` is the planned upgrade).
+**MTTD:** lag alert as in §2. Flush latency is exported as
+`router_flush_duration_seconds` (router `/metrics`, scraped as job `router`);
+alert on its p95 to detect a slow sink before lag crosses its threshold.
 
 ---
 
@@ -151,8 +152,13 @@ metric + alert on `router_flush_duration_ms` is the planned upgrade).
 - **Symptom:** **Infra stays green** (brokers 3, lag ~0, DB up). The
   `gold_recovery` DAG's `dq_check` task goes **red**.
 
-**Detect** — Airflow: `gold_recovery_score` → `compute` green, `dq_check` red:
-`"latest day ... lags hr_readings ... a required input stream went silent"`.
+**Detect** — Two surfaces, one root cause:
+- Airflow: `gold_recovery_score` → `compute` green, `dq_check` red:
+  `"latest day ... lags hr_readings ... a required input stream went silent"`.
+- Grafana: 3 · Data Stores → "Gold DQ status" reads FAIL, "Gold freshness lag"
+  rises above 0. Alerts `DataFreshnessStale` / `DataQualityCheckFailing` fire.
+  (DQ results are written to `dq_results` and exported by postgres-exporter, so
+  the data layer alerts on the same stack as infra — single pane of glass.)
 
 **Diagnose**
 1. Check infra first — Prometheus/Grafana are all green. No broker, lag, or DB
@@ -169,8 +175,9 @@ metric + alert on `router_flush_duration_ms` is the planned upgrade).
 **Prevent**
 - Data-layer guardrails (freshness, volume, distribution) as first-class checks.
 - Schema enforcement (Schema Registry / Avro) on ingest.
-- Surface DQ results as Prometheus metrics (e.g. via a results table +
-  postgres-exporter) so infra and data alert in one place — a single pane of glass.
+- DQ results are surfaced as Prometheus metrics (`dq_freshness_lag_days`,
+  `dq_status`) via a results table + postgres-exporter, so infra and data alert
+  on one stack — a single pane of glass (implemented; see 3 · Data Stores).
 
 **Why this matters:** an infra-only setup shows all-green while readiness scores
 silently go stale. Two-layer observability — Prometheus for infrastructure,

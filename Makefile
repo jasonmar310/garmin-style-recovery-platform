@@ -3,6 +3,7 @@
         simulate simulate-surge route backfill \
         airflow-up airflow-down \
         monitoring-up monitoring-down monitoring-stop \
+        pgbouncer-up pgbouncer-down route-pooled \
         gen-alerts \
         chaos-surge chaos-kill chaos-restore chaos-choke chaos-stop-hrv chaos-stale chaos-stale-restore \
         startup-all shutdown-all
@@ -79,7 +80,19 @@ monitoring-stop:
 gen-alerts:
 	python monitoring/gen_alerts.py
 
-# ====================== Chaos (異常模擬) ======================
+# ====================== PgBouncer (連線池 demo) ======================
+# 啟動 PgBouncer（夾在 router 和 TimescaleDB 之間）
+pgbouncer-up:
+	docker compose --profile pgbouncer up -d
+
+pgbouncer-down:
+	docker compose --profile pgbouncer down
+
+# 讓 router 走 PgBouncer（PGPORT=6432）。開多個觀察連線收斂
+route-pooled:
+	PGPORT=6432 python ingest/router.py
+
+# ====================== Chaos (Day 6 異常模擬) ======================
 # 情境 1：流量突增 → consumer lag（需先 make route）
 chaos-surge:
 	./chaos/surge.sh 15 120
@@ -112,13 +125,13 @@ startup-all:
 	docker compose up -d
 	docker compose --profile airflow up -d
 	docker compose --profile monitoring up -d
-	@echo "All services started (Foundation + Airflow + Monitoring)"
+	@echo "✅ All services started (Foundation + Airflow + Monitoring)"
 
 # 實驗完全部關閉（推薦實驗後使用）
 shutdown-all:
 	docker compose --profile monitoring --profile airflow down
 	docker compose down
-	@echo "All services stopped (Foundation + Airflow + Monitoring)"
+	@echo "✅ All services stopped (Foundation + Airflow + Monitoring)"
 
 # ====================== IMPORTANT 危險指令 ======================
 # 完整清除資料（含 volumes，會 wipe 所有資料）— 需手動輸入 yes 確認

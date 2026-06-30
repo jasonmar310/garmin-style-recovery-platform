@@ -166,7 +166,8 @@ services:
       /bin/sh -c "
       mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
       mc mb --ignore-existing local/telemetry &&
-      echo 'cold-tier bucket ready: local/telemetry'
+      mc ilm rule add --expire-days 90 local/telemetry || mc ilm add --expiry-days 90 local/telemetry || true &&
+      echo 'cold-tier bucket ready (lifecycle: expire raw after 90d): local/telemetry'
       "
     networks: [telemetry]
     restart: "no"
@@ -289,9 +290,36 @@ services:
     container_name: postgres-exporter
     environment:
       DATA_SOURCE_NAME: "postgresql://${TIMESCALE_USER}:${TIMESCALE_PASSWORD}@timescaledb:5432/${TIMESCALE_DB}?sslmode=disable"
+      PG_EXPORTER_EXTEND_QUERY_PATH: /etc/pg_exporter/queries.yaml
+    volumes:
+      - ./monitoring/postgres-exporter/queries.yaml:/etc/pg_exporter/queries.yaml:ro
     ports: ["9187:9187"]
     networks: [telemetry]
     profiles: [monitoring]
+    restart: unless-stopped
+
+  # --- PgBouncer: connection pooler in front of TimescaleDB (`--profile pgbouncer`)
+  # Demo for scenario-1 scale-out: many router instances each hold a DB connection;
+  # at scale that approaches max_connections. PgBouncer in TRANSACTION mode reuses
+  # a small set of real backend connections across many idle clients (the router
+  # is busy only during flushes). Point the router at it with PGPORT=6432.
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.1-p0
+    container_name: pgbouncer
+    environment:
+      DB_HOST: timescaledb
+      DB_PORT: "5432"
+      DB_USER: ${TIMESCALE_USER}
+      DB_PASSWORD: ${TIMESCALE_PASSWORD}
+      DB_NAME: ${TIMESCALE_DB}
+      POOL_MODE: transaction          # reuse backends between transactions
+      MAX_CLIENT_CONN: "200"          # how many clients PgBouncer accepts
+      DEFAULT_POOL_SIZE: "5"          # real backend connections to Postgres
+      AUTH_TYPE: scram-sha-256        # match pg16 default
+    ports: ["6432:6432"]
+    depends_on: [timescaledb]
+    networks: [telemetry]
+    profiles: [pgbouncer]
     restart: unless-stopped
 
 networks:

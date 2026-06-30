@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STREAMS = ROOT / "metadata" / "streams.yaml"
 
 BATCH_SIZE = 500        # flush after this many buffered events (across streams)
-BATCH_SECONDS = 10      # ...or after this long, whichever comes first
+BATCH_SECONDS = 10
 BUCKET = "telemetry"
 
 
@@ -110,17 +110,29 @@ def main() -> int:
         aws_secret_access_key=os.getenv("MINIO_ROOT_PASSWORD", ""))
     print(f"  -> MinIO endpoint {os.getenv('S3_ENDPOINT','http://localhost:9000')}", flush=True)
 
+    # Expose app-level metrics for Prometheus — single pane of glass: the router
+    # instruments itself alongside the infra exporters. Background HTTP server;
+    # Prometheus scrapes it (see monitoring/prometheus/prometheus.yml, job=router).
+    from prometheus_client import start_http_server, Histogram, Counter
+    metrics_port = int(os.getenv("ROUTER_METRICS_PORT", "8001"))
+    start_http_server(metrics_port)
+    flush_latency = Histogram("router_flush_duration_seconds",
+                              "Time to flush one batch to both sinks (hot+cold)",
+                              buckets=(.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10))
+    events_flushed = Counter("router_events_flushed_total",
+                             "Total events flushed to sinks")
+    print(f"  -> metrics on :{metrics_port}/metrics", flush=True)
+
     consumer = Consumer({
         "bootstrap.servers": args.bootstrap,
         "group.id": args.group,
-        "enable.auto.commit": False,            # we commit manually, after sinks
+        "enable.auto.commit": False,
         "auto.offset.reset": "earliest",        # don't skip already-buffered data
-        
-        # Note: Single-threaded consumer: flush (DB+MinIO) and heartbeat share one thread.
-        # Better w/ 背景 heartbeat thread、或縮小 batch、或水平擴展
-        # "max.poll.interval.ms": 600000,         # 10 min between polls before eviction
+        # Single-threaded consumer: flush (DB+MinIO) and heartbeat share one thread.
+        # A slow flush (backpressure) can stall heartbeats and get us evicted from the group.
+        # "max.poll.interval.ms": 600000,         # tolerate a long single flush (10m)
         # "session.timeout.ms": 45000,            # heartbeat liveness window
-        # "heartbeat.interval.ms": 15000,         # how often heartbeats are sent
+        # "heartbeat.interval.ms": 15000,         # ~1/3 of session timeout
     })
 
     def on_assign(c, partitions):
@@ -136,17 +148,23 @@ def main() -> int:
         nonlocal last_flush
         t0 = time.time()
         wrote = False
+        n = 0
         for topic, rows in buffers.items():
             if rows:
                 flush_hot(conn, routing[topic], rows)   # hot first
                 flush_cold(s3, routing[topic], rows)    # then cold
+                n += len(rows)
                 wrote = True
         if wrote:
             consumer.commit(asynchronous=False)         # commit ONLY after sinks
+        elapsed = time.time() - t0
+        if wrote:
+            flush_latency.observe(elapsed)              # -> Prometheus
+            events_flushed.inc(n)
         for t in buffers:
             buffers[t].clear()
         last_flush = time.time()
-        return (time.time() - t0) * 1000                # batch processing latency (ms)
+        return elapsed * 1000                           # batch processing latency (ms)
 
     try:
         while True:
