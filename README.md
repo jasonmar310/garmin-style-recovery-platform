@@ -38,9 +38,9 @@ topology.
 - [x] Repo scaffold + ADRs
 - [x] Metadata control plane (`streams.yaml`)
 - [x] Source-data-driven profiler → `seed_params.yaml`
-- [ ] Docker Compose: Kafka KRaft 3-broker + Timescale + MinIO
-- [ ] Simulator (rate-configurable)
-- [ ] Router → hot/cold sinks
-- [ ] Airflow DAG factory + DQ checks
-- [ ] Prometheus + Grafana dashboards
-- [ ] Anomaly scenarios + runbook
+- [x] Docker Compose: Kafka KRaft 3-broker + Timescale + MinIO
+- [x] Simulator (rate-configurable)
+- [x] Router → hot/cold sinks
+- [x] Airflow DAG factory + DQ checks
+- [x] Prometheus + Grafana dashboards (incl. data-layer DQ alerts)
+- [x] Anomaly scenarios + runbook

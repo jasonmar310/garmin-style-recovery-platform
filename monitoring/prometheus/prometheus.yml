@@ -26,3 +26,10 @@ scrape_configs:
   - job_name: postgres
     static_configs:
       - targets: ["postgres-exporter:9187"]
+
+  # Router (app-level metrics): flush latency + events flushed. The router runs
+  # on the host, so we reach it via host.docker.internal (Docker Desktop/OrbStack).
+  # `honor_timestamps`/relabel not needed; it just may be DOWN when route isn't running.
+  - job_name: router
+    static_configs:
+      - targets: ["host.docker.internal:8001"]

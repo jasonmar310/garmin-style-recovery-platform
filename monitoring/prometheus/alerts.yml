@@ -60,3 +60,25 @@ groups:
       summary: Under-replicated partitions present
       description: At least one partition is under-replicated — a replica has fallen
         out of the ISR; durability at risk.
+- name: data_quality
+  rules:
+  - alert: DataFreshnessStale
+    expr: max(dq_freshness_lag_days) > 0
+    for: 1m
+    labels:
+      severity: warning
+      layer: data
+    annotations:
+      summary: Gold metric is stale (data-layer anomaly)
+      description: A gold metric lags its source stream — a required input may have
+        gone silent. Infra can look healthy.
+  - alert: DataQualityCheckFailing
+    expr: min(dq_status) < 1
+    for: 1m
+    labels:
+      severity: warning
+      layer: data
+    annotations:
+      summary: A data-quality check is failing
+      description: dq_status=0 for a gold metric (empty, drifted, or stale). See the
+        failing Airflow dq_check task.

@@ -70,6 +70,20 @@
       } ],
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 1 }, "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Sink flush latency p95 (router)",
+      "description": "p95 of router_flush_duration_seconds. Spikes on downstream backpressure (scenario 3) while throughput stays flat — the app-layer confirmation of a slow sink. Needs the router running (host.docker.internal:8001).",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [ {
+        "expr": "histogram_quantile(0.95, sum by (le) (rate(router_flush_duration_seconds_bucket[1m])))",
+        "legendFormat": "flush p95", "refId": "A"
+      } ],
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }, "unit": "s", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
     }
   ]
 }
