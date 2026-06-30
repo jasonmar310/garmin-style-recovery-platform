@@ -156,7 +156,7 @@ def dq_check(metric: str, truth_key: str, **_):
             f"readiness scores are stale.")
 
 
-default_args = {"owner": "data", "retries": 1, "retry_delay": timedelta(minutes=2)}
+default_args = {"owner": "data", "retries": 1, "retry_delay": timedelta(seconds=30)}
 
 # Generate one DAG per gold metric declared in metadata — the metadata-driven core.
 for gm in meta["gold_metrics"]:
