@@ -53,6 +53,9 @@ def sample(model: str, p: dict, hour: float) -> float | str:
 
     if model == "gamma":
         # method of moments: shape k, scale theta from mean & std
+        if mean <= 0:
+            raise ValueError(f"gamma model needs a positive mean, got {mean} "
+                             f"(check the seed params for this signal)")
         k = (mean / std) ** 2
         theta = std ** 2 / mean
         return float(np.clip(np.random.gamma(k, theta), lo, hi))

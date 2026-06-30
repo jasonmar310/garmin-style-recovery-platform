@@ -242,6 +242,11 @@ services:
       - ./monitoring/prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
     ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    # The router runs on the host (not in Compose); the prometheus.yml `router`
+    # job scrapes it via host.docker.internal. Docker Desktop/OrbStack resolve
+    # this automatically, but on Linux it must be mapped to the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [telemetry]
     profiles: [monitoring]
     restart: unless-stopped

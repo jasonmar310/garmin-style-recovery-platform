@@ -52,6 +52,17 @@ if [[ "${1:-}" == "--restore" ]]; then
 fi
 
 # ----------------------------------------------------------------- inject -----
+# Pre-flight: HRV must stay silent. If the generator/router is still running it
+# will refill day D and the gap vanishes — refuse to inject so we never delete
+# rows that immediately come back (a silently-failed demo is worse than no demo).
+if pgrep -f generator.py >/dev/null 2>&1 || pgrep -f router.py >/dev/null 2>&1; then
+  echo ">> !! ABORT: the generator and/or router are still running — HRV would refill"
+  echo ">>    day D and the freshness gap would not hold. Stop them first:"
+  echo ">>        pkill -f generator.py; pkill -f router.py"
+  echo ">>    then re-run 'make chaos-stale'. No rows were deleted."
+  exit 1
+fi
+
 D="$(psql_exec "SELECT max(date_trunc('day',ts)::date) FROM hr_readings;")"
 echo ">> latest hr_readings day = ${D}; silencing HRV + removing gold for that day"
 

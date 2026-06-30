@@ -8,7 +8,11 @@ __pycache__/
 data/
 .env
 .env.local
-.env.*example
+# ...but keep the committed template (it carries no real secrets)
+!.env.example
 
 # Airflow logs
 airflow/logs/
+
+# notes
+docs/adr/notes/

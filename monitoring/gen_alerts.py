@@ -62,9 +62,38 @@ def main() -> int:
         },
     ]
 
+    # Data layer: surfaced from dq_results via postgres-exporter (single pane of
+    # glass). These fire even when infra is fully green — the whole point of
+    # two-layer observability.
+    data_rules = [
+        {
+            "alert": "DataFreshnessStale",
+            "expr": "max(dq_freshness_lag_days) > 0",
+            "for": "1m",
+            "labels": {"severity": "warning", "layer": "data"},
+            "annotations": {
+                "summary": "Gold metric is stale (data-layer anomaly)",
+                "description": ("A gold metric lags its source stream — a required "
+                                "input may have gone silent. Infra can look healthy."),
+            },
+        },
+        {
+            "alert": "DataQualityCheckFailing",
+            "expr": "min(dq_status) < 1",
+            "for": "1m",
+            "labels": {"severity": "warning", "layer": "data"},
+            "annotations": {
+                "summary": "A data-quality check is failing",
+                "description": ("dq_status=0 for a gold metric (empty, drifted, or "
+                                "stale). See the failing Airflow dq_check task."),
+            },
+        },
+    ]
+
     doc = {"groups": [
         {"name": "pipeline_lag", "rules": lag_rules},
         {"name": "cluster_health", "rules": cluster_rules},
+        {"name": "data_quality", "rules": data_rules},
     ]}
 
     OUT.write_text(
@@ -72,7 +101,7 @@ def main() -> int:
         "# Do not edit by hand — change the SLA in streams.yaml and re-run.\n"
         + yaml.safe_dump(doc, sort_keys=False, allow_unicode=True))
     print(f"[ok] {len(lag_rules)} lag rules + {len(cluster_rules)} cluster rules "
-          f"-> {OUT.relative_to(ROOT)}")
+          f"+ {len(data_rules)} data rules -> {OUT.relative_to(ROOT)}")
     return 0
 
 
