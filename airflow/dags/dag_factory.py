@@ -114,19 +114,42 @@ def dq_check(metric: str, truth_key: str, **_):
         if fresh_source:
             cur.execute(f"SELECT max(date_trunc('day', ts)::date) FROM {fresh_source};")
             (src_day,) = cur.fetchone()
-    conn.close()
     print(f"[DQ] {spec['table']}: rows={n} avg={avg} max_day={max_day} "
           f"| whoop truth mean={t_mean} std={t_std} | {fresh_source} latest={src_day}")
+
+    # Evaluate checks -> a freshness lag (days) and a pass/fail status.
+    freshness_lag = (src_day - max_day).days if (src_day and max_day) else 0
+    drift = bool(t_mean and t_std and n and abs(float(avg) - t_mean) > 2 * t_std)
+    failed = (not n) or drift or freshness_lag > 0
+
+    # Persist the result so postgres-exporter can surface it to Prometheus
+    # (data-quality signals land on the SAME Grafana as infra — single pane of glass).
+    with conn, conn.cursor() as cur:
+        cur.execute("""CREATE TABLE IF NOT EXISTS dq_results (
+                         metric TEXT PRIMARY KEY, rows BIGINT,
+                         avg_value DOUBLE PRECISION, freshness_lag_days INT,
+                         status INT, checked_at TIMESTAMPTZ DEFAULT now());""")
+        cur.execute("""INSERT INTO dq_results
+                         (metric, rows, avg_value, freshness_lag_days, status, checked_at)
+                       VALUES (%s,%s,%s,%s,%s, now())
+                       ON CONFLICT (metric) DO UPDATE SET
+                         rows=EXCLUDED.rows, avg_value=EXCLUDED.avg_value,
+                         freshness_lag_days=EXCLUDED.freshness_lag_days,
+                         status=EXCLUDED.status, checked_at=now();""",
+                    (metric, n, float(avg) if avg is not None else None,
+                     freshness_lag, 0 if failed else 1))
+    conn.close()
+
     if not n:
         raise ValueError(f"DQ FAIL: {spec['table']} is empty (no gold produced)")
-    if t_mean and t_std and abs(float(avg) - t_mean) > 2 * t_std:
+    if drift:
         raise ValueError(
             f"DQ FAIL: {spec['table']} avg {float(avg):.1f} is >2σ from Whoop "
             f"mean {t_mean} — gold distribution drifted (upstream anomaly?)")
     # Freshness: gold must keep pace with the raw it derives from. If it lags,
     # a required input stream has gone silent — infra looks fine (Prometheus sees
     # no error), but readiness scores are stale. This is the data-layer anomaly.
-    if src_day and max_day and max_day < src_day:
+    if freshness_lag > 0:
         raise ValueError(
             f"DQ FAIL: {spec['table']} latest day {max_day} lags {fresh_source} "
             f"latest {src_day} — a required input stream went silent; "

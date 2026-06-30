@@ -1,0 +1,22 @@
+# Custom query: surface Airflow data-quality results (written to dq_results by
+# the gold DAGs) as Prometheus metrics, so the data-quality layer lands on the
+# SAME Grafana/alerting as the infra metrics — a single pane of glass.
+# Produces: dq_freshness_lag_days{metric=...}, dq_status{...}, dq_rows{...}
+dq:
+  query: "SELECT metric, rows, avg_value, freshness_lag_days, status FROM dq_results"
+  metrics:
+    - metric:
+        usage: "LABEL"
+        description: "Gold metric name"
+    - freshness_lag_days:
+        usage: "GAUGE"
+        description: "Days the gold table lags its source stream (0=fresh, >0=stale)"
+    - status:
+        usage: "GAUGE"
+        description: "DQ status (1=pass, 0=fail)"
+    - rows:
+        usage: "GAUGE"
+        description: "Row count in the gold table at last check"
+    - avg_value:
+        usage: "GAUGE"
+        description: "Average score at last check"
