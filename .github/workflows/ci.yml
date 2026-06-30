@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install validation deps
+        run: pip install pyyaml
+
+      - name: Python — syntax check all modules
+        run: python -m compileall -q airflow etl ingest monitoring simulator
+
+      - name: YAML — parse every .yaml/.yml
+        run: |
+          python - <<'PY'
+          import glob, sys, yaml
+          files = glob.glob("**/*.yml", recursive=True) + glob.glob("**/*.yaml", recursive=True)
+          bad = []
+          for f in files:
+              try:
+                  with open(f) as fh:
+                      list(yaml.safe_load_all(fh))
+              except Exception as e:
+                  bad.append((f, e))
+          for f, e in bad:
+              print(f"::error file={f}::YAML parse failed: {e}")
+          sys.exit(1 if bad else 0)
+          print(f"ok — {len(files)} YAML files parse")
+          PY
+
+      - name: JSON — parse every dashboard
+        run: |
+          for f in monitoring/grafana/dashboards/*.json; do
+            python -m json.tool "$f" > /dev/null && echo "ok $f"
+          done
+
+      - name: Shell — bash -n on every chaos script
+        run: |
+          for f in chaos/*.sh; do
+            bash -n "$f" && echo "ok $f"
+          done
+
+      - name: Alerts — generated rules are in sync with metadata
+        run: |
+          python monitoring/gen_alerts.py
+          git diff --exit-code monitoring/prometheus/alerts.yml \
+            || (echo "::error::alerts.yml is out of sync with streams.yaml — run 'make gen-alerts' and commit" && exit 1)
+
+      - name: Compose — config is valid
+        run: |
+          cp .env.example .env
+          docker compose config -q && echo "ok — docker-compose.yml is valid"
