@@ -1,4 +1,4 @@
-.PHONY: up down ps logs log-% verify clean help \
+.PHONY: up down ps logs log-% verify test clean help \
         topics topics-plan \
         simulate simulate-surge route backfill \
         airflow-up airflow-down \
@@ -39,6 +39,11 @@ verify:
 		echo "-- $$b --"; \
 		docker exec $$b kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null && echo "OK" || echo "UNREACHABLE"; \
 	done
+
+# 純函式單元測試（sample/events_per_tick/build_routing/cold-key）— 不需任何 infra
+# -v 列出每個測試與 PASSED；-ra 在結尾顯示 skip/fail 摘要
+test:
+	pytest -v -ra
 
 topics-plan:
 	python ingest/create_topics.py --dry-run
@@ -229,6 +234,7 @@ help:
 	@echo "  make check-db          → 情境3：DB 連線 + Lock 等待"
 	@echo "  make dq-status         → 情境4：直接讀 dq_results 表"
 	@echo "  make check-targets     → Prometheus target 健康"
+	@echo "  make test	 	 → 純函式單元測試（sample/events_per_tick/build_routing/cold-key）"
 	@echo "  --- DAG / pipeline ---"
 	@echo "  make dag-run           → 觸發 DAG + 等跑完 + 顯示 DQ"
 	@echo "  make ps-pipeline       → 看 route/generator 在不在跑"
