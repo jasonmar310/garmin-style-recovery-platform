@@ -1,7 +1,5 @@
 # Garmin Recovery & Training-Readiness Platform
 
-![CI](https://github.com/<OWNER>/<REPO>/actions/workflows/ci.yml/badge.svg)
-
 A metadata-driven streaming pipeline that ingests synthetic wearable telemetry,
 lands it in a hot (TimescaleDB) and cold (MinIO) tier, derives Garmin-style
 recovery metrics via Airflow, and is monitored end-to-end with Prometheus +
