@@ -16,3 +16,6 @@ airflow/logs/
 
 # notes
 docs/adr/notes/
+
+# .DS_Store
+.DS_Store
