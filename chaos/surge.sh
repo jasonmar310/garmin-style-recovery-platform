@@ -14,9 +14,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RATE="${1:-15}"          # multiplier over baseline (baseline = 1)
-DURATION="${2:-120}"     # seconds; 0 = until Ctrl-C
-DEVICES="${3:-200}"
+RATE="${1:-30}"          # multiplier over baseline (baseline = 1)
+DURATION="${2:-300}"     # seconds; 0 = until Ctrl-C
+DEVICES="${3:-450}"
 
 echo ">> SURGE: rate=${RATE}x baseline, ${DEVICES} devices, ${DURATION}s"
 echo ">> Make sure a router is running (make route) so lag is the visible symptom."
