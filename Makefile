@@ -172,7 +172,7 @@ stop-pipeline:
 
 # 情境 1：流量突增 → consumer lag（需先 make route）
 chaos-surge:
-	./chaos/surge.sh 15 120
+	./chaos/surge.sh 30 300
 
 # 情境 2：broker 故障 → under-replicated
 chaos-kill:
