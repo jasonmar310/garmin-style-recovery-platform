@@ -1,3 +1,6 @@
+include .env
+export
+
 .PHONY: up down ps logs log-% verify test clean help \
         topics topics-plan \
         simulate simulate-surge route backfill \
