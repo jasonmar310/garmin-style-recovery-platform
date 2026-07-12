@@ -19,7 +19,7 @@
 # ============================================================================
 set -euo pipefail
 
-HOLD="${1:-60}"          # seconds to hold the lock
+HOLD="${1:-120}"          # seconds to hold the lock
 echo ">> CHOKE: locking hr_readings ACCESS EXCLUSIVE for ${HOLD}s — router INSERTs will block."
 echo ">> Watch router flush latency + Grafana lag (throughput stays flat — that's the tell)."
 

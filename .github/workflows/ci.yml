@@ -19,7 +19,7 @@ jobs:
         run: pip install pyyaml numpy pytest
 
       - name: Python — syntax check all modules
-        run: python -m compileall -q airflow etl ingest monitoring simulator
+        run: python -m compileall -q airflow apps etl ingest monitoring simulator
 
       - name: Python — unit tests (pure logic)
         run: pytest

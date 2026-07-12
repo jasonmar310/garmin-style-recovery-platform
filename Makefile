@@ -13,6 +13,10 @@ export
         gen-alerts \
         chaos-surge chaos-kill chaos-restore chaos-choke chaos-stop-hrv chaos-stale chaos-stale-restore \
         startup-all shutdown-all
+		alerter:
+			python apps/hrv_alerter.py
+		api:
+			uvicorn apps.readiness_api:app --host 0.0.0.0 --port 8003
 
 # ====================== 基礎指令 ======================
 # Infra (Kafka + Timescale + MinIO)
@@ -168,6 +172,8 @@ ps-pipeline:
 stop-pipeline:
 	@pkill -f generator.py 2>/dev/null && echo "  stopped generator" || echo "  generator not running"
 	@pkill -f router.py 2>/dev/null && echo "  stopped router" || echo "  router not running"
+	@pkill -f hrv_alerter.py 2>/dev/null && echo "  stopped alerter" || echo "  alerter not running"
+	@pkill -f readiness_api 2>/dev/null && echo "  stopped api" || echo "  api not running"
 
 
 # 情境 1：流量突增 → consumer lag（需先 make route）
