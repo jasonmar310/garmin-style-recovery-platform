@@ -1,4 +1,4 @@
-include .env
+-include .env
 export
 
 .PHONY: up down ps logs log-% verify test clean help \
@@ -9,14 +9,11 @@ export
         pgbouncer-up pgbouncer-down route-pooled \
         dq-status dag-run \
         check-lag check-cluster check-db check-targets check-all \
-        ps-pipeline stop-pipeline \
+        ps-pipeline stop-ingest stop-pipeline \
         gen-alerts \
+        alerter api readiness readiness-check \
         chaos-surge chaos-kill chaos-restore chaos-choke chaos-stop-hrv chaos-stale chaos-stale-restore \
         startup-all shutdown-all
-		alerter:
-			python apps/hrv_alerter.py
-		api:
-			uvicorn apps.readiness_api:app --host 0.0.0.0 --port 8003
 
 # ====================== 基礎指令 ======================
 # Infra (Kafka + Timescale + MinIO)
@@ -118,6 +115,29 @@ dag-run:
 	echo; \
 	$(MAKE) --no-print-directory dq-status
 
+# ====================== 多應用（Q2 歸因）+ 用戶視角（情境 4）======================
+# hrv-alerter：獨立 consumer group，只消費 hrv
+# 歸因對照組：chaos-choke 時 router lag 飆
+alerter:
+	python apps/hrv_alerter.py
+
+# readiness-api：read path —— 不碰 Kafka，只讀 gold_recovery。
+# 帶來 RED 的 Duration 軸，並給情境 4 一張「用戶的臉」。
+api:
+	uvicorn apps.readiness_api:app --host 0.0.0.0 --port 8003
+
+# 可覆寫：make readiness DEV=dev-00042
+DEV ?= dev-00001
+
+# 查一個用戶的 readiness（注入前後各跑一次 → before/after 對照）
+readiness:
+	@curl -s localhost:8003/readiness/$(DEV) | python3 -m json.tool
+
+# 今天 vs API 回的那天
+readiness-check:
+	@echo ">> today is        : $$(date +%Y-%m-%d)"
+	@echo ">> API returns day : $$(curl -s localhost:8003/readiness/$(DEV) | python3 -c 'import sys,json; print(json.load(sys.stdin)["day"])')"
+
 # ====================== PgBouncer (連線池 demo) ======================
 # 啟動 PgBouncer（夾在 router 和 TimescaleDB 之間）
 pgbouncer-up:
@@ -135,6 +155,12 @@ route-pooled:
 check-lag:
 	@docker exec kafka1 kafka-consumer-groups --bootstrap-server localhost:9092 \
 		--describe --group router
+
+# 歸因用：所有 consumer group 的 lag 並排看（router vs hrv-alerter）
+# 「同一個 topic，是全部 group 一起 lag，還是只有一個？」—— 這是 Q2 的判別式。
+check-lag-groups:
+	@docker exec kafka1 kafka-consumer-groups --bootstrap-server localhost:9092 \
+		--describe --all-groups
 
 # 情境 2：叢集健康 —— 哪台 broker 活著 + 有沒有 under-replicated 分區
 check-cluster:
@@ -158,24 +184,29 @@ check-db:
 # 所有 Prometheus target 健康嗎（up=1 才正常）
 check-targets:
 	@curl -s localhost:9090/api/v1/targets | \
-		python3 -c "import sys,json; [print('  %-10s %s' % (t['labels']['job'], t['health'])) for t in json.load(sys.stdin)['data']['activeTargets']]"
+		python3 -c "import sys,json; [print('  %-14s %s' % (t['labels']['job'], t['health'])) for t in json.load(sys.stdin)['data']['activeTargets']]"
 
 # 一次檢查四個情境（cluster + lag + db + DQ）
 check-all: check-cluster check-lag check-db dq-status
 
-# ====================== Pipeline 程序控制（host 上的 route/generator）======================
-# 看 route / generator 運行情況（情境 4 注入前要先停掉，不然 HRV 會被 refill）
+# ====================== Pipeline 程序控制（host 上的 route/generator/apps）======================
+# 看誰在跑（情境 4 注入前要先停 ingest，不然 HRV 會被 refill）
 ps-pipeline:
-	@ps aux | grep -E "generator.py|router.py" | grep -v grep || echo "  none running"
+	@ps aux | grep -E "generator.py|router.py|hrv_alerter.py|readiness_api" | grep -v grep || echo "  none running"
 
-# 乾淨停掉 route + generator（解 Ctrl-C 停不掉的問題）
-stop-pipeline:
+# 只停 ingest（generator + router）—— 情境 4 注入前用「這個」，不是 stop-pipeline！
+# apps 要繼續活著：alerter 不寫 DB、api 只讀，都不會 refill HRV；
+# 而且 api 必須存活，才能 demo「infra 全綠、但用戶拿到昨天的分數」。
+stop-ingest:
 	@pkill -f generator.py 2>/dev/null && echo "  stopped generator" || echo "  generator not running"
 	@pkill -f router.py 2>/dev/null && echo "  stopped router" || echo "  router not running"
+
+# 全部停（收工用）
+stop-pipeline: stop-ingest
 	@pkill -f hrv_alerter.py 2>/dev/null && echo "  stopped alerter" || echo "  alerter not running"
 	@pkill -f readiness_api 2>/dev/null && echo "  stopped api" || echo "  api not running"
 
-
+# ====================== Chaos（四個情境）======================
 # 情境 1：流量突增 → consumer lag（需先 make route）
 chaos-surge:
 	./chaos/surge.sh 30 300
@@ -187,15 +218,16 @@ chaos-kill:
 chaos-restore:
 	./chaos/kill_broker.sh --restore kafka2
 
-# 情境 3：下游 backpressure（需先 source .env 讓腳本讀得到 TIMESCALE_*）
+# 情境 3：下游 backpressure（120s 讓 lag 爬得夠明顯，對照 hrv-alerter 的平坦）
 chaos-choke:
-	./chaos/choke_sink.sh 60
+	./chaos/choke_sink.sh 120
 
-# 情境 4：停 HRV stream → 資料層 freshness 異常（infra 全綠、DQ 紅）
+# 情境 4：停 HRV stream → 其他 stream 照流（「活著的綠」：throughput 有數字、lag=0、只有 DQ 紅）
 chaos-stop-hrv:
-	./chaos/stop_hrv.sh 200 180
+	./chaos/stop_hrv.sh 200 300
 
 # 情境 4（demo 觸發）：刪最新天 HRV+gold 製造 freshness gap，立即可見
+# 順序：make stop-ingest → make chaos-stale → make route & make chaos-stop-hrv & → make dag-run
 chaos-stale:
 	./chaos/stale_hrv.sh
 
@@ -204,6 +236,8 @@ chaos-stale-restore:
 
 # ====================== 快捷操作 ======================
 # 全部開啟 (Infra + Airflow + Monitoring）
+# 注意：冷啟動（make clean 之後）會卡在 airflow-init（pip 裝 pyarrow + db migrate），
+# 需要 3-8 分鐘。想看進度就分段跑：make up → verify → topics → monitoring-up → airflow-up
 startup-all:
 	docker compose up -d
 	docker compose --profile airflow up -d
@@ -224,28 +258,40 @@ clean:
 
 help:
 	@echo "Available commands:"
-	@echo "  make up                → 啟動Infra (Kafka+Timescale+MinIO)"
+	@echo "  --- 啟動 ---"
+	@echo "  make up                → 啟動 Infra (Kafka+Timescale+MinIO)"
 	@echo "  make monitoring-up     → 啟動 Prometheus + Grafana + exporters"
-	@echo "  make airflow-up        → 啟動 Airflow"
+	@echo "  make airflow-up        → 啟動 Airflow（慢，提早開）"
 	@echo "  make startup-all       → 全部啟動"
 	@echo "  make shutdown-all      → 全部關閉（實驗完推薦）"
-	@echo "  make verify            → 檢查 KRaft 狀態"
+	@echo "  make verify            → 檢查 KRaft quorum"
+	@echo "  make topics            → 從 metadata 建 topic（clean 後必跑）"
 	@echo "  make backfill          → Backfill 14 天歷史資料"
 	@echo "  make gen-alerts        → 從 SLA 生成告警規則"
+	@echo "  --- 應用（各開一個 terminal）---"
+	@echo "  make route             → router      :8001  write path"
+	@echo "  make simulate          → generator          baseline ~200 msg/s"
+	@echo "  make alerter           → hrv-alerter :8002  consume path（不碰 DB → 歸因對照組）"
+	@echo "  make api               → readiness-api :8003  read path（不碰 Kafka）"
+	@echo "  --- Chaos（四個情境）---"
 	@echo "  make chaos-surge       → 情境1：流量突增"
-	@echo "  make chaos-kill        → 情境2：Kill broker （chaos-restore 復原）"
-	@echo "  make chaos-choke       → 情境3：下游 backpressure"
+	@echo "  make chaos-kill        → 情境2：Kill broker（chaos-restore 復原）"
+	@echo "  make chaos-choke       → 情境3：下游 backpressure（120s）"
 	@echo "  make chaos-stale       → 情境4：HRV 沉默 → DQ freshness（chaos-stale-restore 復原）"
+	@echo "  make chaos-stop-hrv    → 情境4：其他 stream 照流、只有 HRV 沉默（「活著的綠」）"
 	@echo "  --- 診斷 / 檢查 ---"
-	@echo "  make check-all         → 四情整體檢查 (cluster+lag+db+DQ)"
-	@echo "  make check-lag         → 情境1/3：consumer lag (kafka 原生)"
+	@echo "  make check-all         → 四情境整體檢查 (cluster+lag+db+DQ)"
+	@echo "  make check-lag         → 情境1/3：router 的 consumer lag"
+	@echo "  make check-lag-groups  → 歸因：所有 group 的 lag 並排（Q2 判別式）"
 	@echo "  make check-cluster     → 情境2：broker status + under-replicated"
 	@echo "  make check-db          → 情境3：DB 連線 + Lock 等待"
 	@echo "  make dq-status         → 情境4：直接讀 dq_results 表"
+	@echo "  make readiness-check   → 情境4：今天 vs API 回的那天（用戶損害）"
 	@echo "  make check-targets     → Prometheus target 健康"
-	@echo "  make test	 	 → 純函式單元測試（sample/events_per_tick/build_routing/cold-key）"
-	@echo "  --- DAG / pipeline ---"
+	@echo "  make test              → 純函式單元測試"
+	@echo "  --- Pipeline 程序控制 ---"
 	@echo "  make dag-run           → 觸發 DAG + 等跑完 + 顯示 DQ"
-	@echo "  make ps-pipeline       → 看 route/generator 在不在跑"
-	@echo "  make stop-pipeline     → 乾淨停掉 route + generator"
-	@echo "  make clean             → 清除所有資料"
+	@echo "  make ps-pipeline       → 看誰在跑（route/generator/alerter/api）"
+	@echo "  make stop-ingest       → 只停 generator+router（情境4 注入前用這個）"
+	@echo "  make stop-pipeline     → 全部停（收工用）"
+	@echo "  make clean             → 清除所有資料（危險）"
