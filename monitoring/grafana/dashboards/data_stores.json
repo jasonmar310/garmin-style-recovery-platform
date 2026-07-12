@@ -99,6 +99,20 @@
       "targets": [ { "expr": "dq_freshness_lag_days", "legendFormat": "{{metric}}", "refId": "A" } ],
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }, "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-    }
+    },
+    {
+    "id": 7,
+    "type": "timeseries",
+    "title": "Readiness API latency p95 (read path)",
+    "description": "RED Duration for the read-path app. Stays green during chaos-stale — the data is stale, the serving is fine: that split is the two-layer story.",
+    "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+    "datasource": { "type": "prometheus", "uid": "prometheus" },
+    "targets": [ {
+      "expr": "histogram_quantile(0.95, sum by (le) (rate(readiness_api_request_duration_seconds_bucket[1m])))",
+      "legendFormat": "p95", "refId": "A"
+    } ],
+    "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }, "unit": "s", "min": 0 }, "overrides": [] },
+    "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+  }
   ]
 }

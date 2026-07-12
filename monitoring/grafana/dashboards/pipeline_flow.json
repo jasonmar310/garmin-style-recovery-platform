@@ -84,6 +84,20 @@
       } ],
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }, "unit": "s", "min": 0 }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
-    }
+    },
+    {
+    "id": 6,
+    "type": "timeseries",
+    "title": "Consumer lag by GROUP (attribution)",
+    "description": "The Q2 discriminator. Same topics, independent groups: if only router lags while hrv-alerter stays flat, the fault is the router's own sink (scenario 3), not Kafka / the producer.",
+    "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
+    "datasource": { "type": "prometheus", "uid": "prometheus" },
+    "targets": [ {
+      "expr": "sum by (consumergroup) (kafka_consumergroup_lag)",
+      "legendFormat": "{{consumergroup}}", "refId": "A"
+    } ],
+    "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2 }, "min": 0 }, "overrides": [] },
+    "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+  }
   ]
 }

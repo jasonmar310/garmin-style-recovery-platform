@@ -33,3 +33,13 @@ scrape_configs:
   - job_name: router
     static_configs:
       - targets: ["host.docker.internal:8001"]
+  
+  # Second application (Q2): independent consumer group, no DB dependency.
+  - job_name: hrv-alerter
+    static_configs:
+      - targets: ["host.docker.internal:8002"]
+
+  # Read-path application (Q2/Q3): serves gold_recovery over HTTP; RED metrics.
+  - job_name: readiness-api
+    static_configs:
+      - targets: ["host.docker.internal:8003"]
