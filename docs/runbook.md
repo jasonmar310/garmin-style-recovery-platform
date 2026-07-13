@@ -46,7 +46,7 @@ The fast path from "a number moved" to "which component is wrong":
 ## 2. Incident: Consumer lag high (load surge)
 
 - **Alert:** `ConsumerLagHigh_<stream>` (threshold from `streams.yaml` SLA, for 1m)
-- **Reproduce:** `make chaos-surge` (`./chaos/surge.sh 15 120`)
+- **Reproduce:** `make chaos-surge` (`./chaos/surge.sh 30 300` — 30× baseline, 300s, 450 devices)
 - **Symptom:** Total consumer lag climbs; `heart_rate` leads (6 partitions, highest rate).
 
 **Detect** — 2 · Pipeline Flow → "Consumer lag by topic" rising; alert fires.
@@ -56,8 +56,10 @@ The fast path from "a number moved" to "which component is wrong":
 2. Which stream/partition? → "Per-partition lag" panel localizes the hot stream.
 
 **Mitigate (stop the bleed)**
-- Scale out the consumer: start a second `make route` in the same group `router`.
-  Kafka rebalances partitions across instances; combined throughput rises; lag drains.
+- Scale out the consumer: start a second router in the same group `router` —
+  `ROUTER_METRICS_PORT=8004 make route` (:8001 is held by the first instance;
+  :8002/:8003 belong to hrv-alerter / readiness-api). Kafka rebalances partitions
+  across instances; combined throughput rises; lag drains.
 
 **Prevent (root cause)**
 - Lag-based autoscaling (e.g. KEDA on `kafka_consumergroup_lag`).
@@ -105,7 +107,7 @@ faster detection at higher Prometheus load — a detection-speed vs. cost trade-
 
 ## 4. Incident: Downstream backpressure (slow sink)
 
-- **Reproduce:** `make chaos-choke` (`./chaos/choke_sink.sh 60` — locks `hr_readings`)
+- **Reproduce:** `make chaos-choke` (`./chaos/choke_sink.sh 120` — locks `hr_readings`)
 - **Symptom:** Lag climbs **while throughput stays flat**; flush latency spikes;
   commit rate falls toward 0.
 
@@ -116,6 +118,9 @@ faster detection at higher Prometheus load — a detection-speed vs. cost trade-
 1. Lag is up — surge or backpressure? → **Throughput panel.** Flat throughput +
    rising lag = **downstream backpressure**, not load.
 2. Confirm at the sink: 3 · Data Stores → commit rate ↓, active connections ↑.
+   Attribution cross-check: `make check-lag-groups` — `hrv-alerter` (same broker,
+   no DB dependency) stays flat while `router` lags ⇒ the fault is the router's
+   sink, not Kafka.
 3. Failure propagates **upstream**: slow hot sink → router INSERT blocks → offsets
    can't commit → Kafka lag backs up.
 
@@ -146,7 +151,9 @@ alert on its p95 to detect a slow sink before lag crosses its threshold.
 
 ## 5. Incident: Data-layer anomaly (silent input stream) — two-layer observability
 
-- **Reproduce:** `make chaos-stale` (removes latest HRV + gold day); restore
+- **Reproduce:** `make stop-ingest` first (a running generator/router would
+  refill the deleted day — the script guards and aborts if either is alive),
+  then `make chaos-stale` (removes latest HRV + gold day); restore
   `make chaos-stale-restore`. (`chaos/stop_hrv.sh` shows the real mechanism — a
   silenced HRV producer — but needs a day rollover to surface.)
 - **Symptom:** **Infra stays green** (brokers 3, lag ~0, DB up). The
@@ -159,6 +166,9 @@ alert on its p95 to detect a slow sink before lag crosses its threshold.
   rises above 0. Alerts `DataFreshnessStale` / `DataQualityCheckFailing` fire.
   (DQ results are written to `dq_results` and exported by postgres-exporter, so
   the data layer alerts on the same stack as infra — single pane of glass.)
+- User view: `make readiness-check` — the readiness API (`make api`, :8003) stays
+  green on its own RED metrics yet returns yesterday's `day`: the user-visible
+  damage that infra monitoring cannot see.
 
 **Diagnose**
 1. Check infra first — Prometheus/Grafana are all green. No broker, lag, or DB
@@ -194,7 +204,7 @@ make verify                      # KRaft quorum health
 make monitoring-up               # Prometheus + Grafana + exporters
 
 # load
-make route                       # consumer (run a 2nd for scale-out demo)
+make route                       # consumer (2nd instance: ROUTER_METRICS_PORT=8004 make route)
 make simulate                    # baseline load
 make backfill                    # 14 days of history
 
