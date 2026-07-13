@@ -5,9 +5,9 @@ lands it in a hot (TimescaleDB) and cold (MinIO) tier, derives Garmin-style
 recovery metrics via Airflow, and is monitored end-to-end with Prometheus +
 Grafana. **The focus is anomaly detection and troubleshooting.**
 
-> New here? Read [`docs/PROJECT_OVERVIEW.md`](docs/PROJECT_OVERVIEW.md) for the
-> full orientation, [`docs/architecture.md`](docs/architecture.md) for the
-> diagram, and [`docs/runbook.md`](docs/runbook.md) for the incident SOPs.
+> New here? Read [`docs/architecture.md`](docs/architecture.md) for the full
+> orientation and diagram, and [`docs/runbook.md`](docs/runbook.md) for the
+> incident SOPs.
 
 ## Data flow
 
@@ -70,6 +70,13 @@ problem = throughput flat).
 
 Diagnostic helpers: `make check-lag` / `check-cluster` / `check-db` / `dq-status`
 / `check-all`.
+
+## Applications (`apps/`) — attribution probes
+
+| App | Port | Role |
+|---|---|---|
+| `make alerter` (`apps/hrv_alerter.py`) | :8002 | independent consumer group on `telemetry.hrv`, touches **no** DB — during backpressure (scenario 3) its lag stays flat while the router's climbs: the attribution control group (`make check-lag-groups`) |
+| `make api` (`apps/readiness_api.py`) | :8003 | read path over `gold_recovery` with RED metrics — during scenario 4 its metrics stay green while the payload's `day` goes stale (`make readiness-check`): the user's view |
 
 ## Seed flow (source-data-driven)
 1. Drop real exports in `data/whoop/` (gitignored).
